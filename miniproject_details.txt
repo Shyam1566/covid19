@@ -1,0 +1,119 @@
+
+mysql table creation :-->
+====================
+ Login to mysql database:->
+  
+  mysql -u cloudera -p 
+  enter the password "cloudera"
+  login to schema to maintain tables:
+
+   use retail_db;
+   show tables;
+--if below tables are present drop and create using below stmts:->
+--------------------------------------------------------------
+create table covid_ind_info(seqno int primary
+key,date_of_info varchar(20),state varchar(50),cured int,deaths
+int,confirmed int);
+
+create table state_wide_Test_Detl(seqno int primary key,test_date
+varchar(50),state varchar(100),Tot_samples int,positive int,nagitive int);
+
+Creating staging tables:->(to make sure the main tables do not have wrong data)
+=======================
+create table covid_ind_info_staging(seqno int primary
+key,date_of_info varchar(20),state varchar(50),cured int,deaths
+int,confirmed int);
+
+create table state_wide_Test_Detl_staging(seqno int primary key,test_date
+varchar(50),state varchar(100),Tot_samples int,positive int,nagitive int);
+
+Load data file local to hdfs:->
+============================
+hdfs dfs -put /home/cloudera/Downloads/StatewiseTestingDetails-201004-194827.csv /data
+
+hdfs dfs -put /home/cloudera/Downloads/Covid19_india-201004-194827.csv /data/
+
+creating password file:-->
+=======================
+echo -n "cloudera" >> .password-file
+
+Export data from hdfs to mysql:->
+===============================
+sqoop export --connect "jdbc:mysql://10.0.2.15:3306/retail_db" --username retail_dba --password-file file:///home/cloudera/.password-file --table covid_ind_info --staging-table covid_ind_info_staging --null-non-string '\\n' --null-string '\\n' --export-dir /data/Covid19_india-201004-194827.csv --fields-terminated-by "," --clear-staging-table 
+
+sqoop export -Dorg.apache.sqoop.export.text.dump_data_on_error=true --connect "jdbc:mysql://10.0.2.15:3306/retail_db" --username retail_dba --password cloudera --table state_wide_Test_Detl --staging-table state_wide_Test_Detl_staging --null-non-string '\\n' --null-string '\\n' --export-dir /data/StatewiseTestingDetails-201004-194827.csv --fields-terminated-by "," --clear-staging-table
+
+
+Import data from RDBMS to HDFS:->
+==============================
+sqoop job creation with incremental import for future data :->
+==========================================================
+sqoop job --create job_state_wide_Test_Detl -- import --connect "jdbc:mysql://10.0.2.15:3306/retail_db" --username retail_dba --password-file file:///home/cloudera/.password-file --table state_wide_Test_Detl --warehouse-dir /user/cloudera/data/ --incremental append --last-value 0 --check-column seqno
+
+
+sqoop job --create job_covid_ind_info -- import --connect "jdbc:mysql://10.0.2.15:3306/retail_db" --username retail_dba --password-file file:///home/cloudera/.password-file --table covid_ind_info --warehouse-dir /user/cloudera/data/ --incremental append --last-value 0 --check-column seqno
+
+
+Executing jobs which we have created :->
+====================================
+1) List all the jobs which we have created 
+ sqoop job --list
+
+2) checking the job_covid_ind_info infomation and executing it 
+ sqoop job --show job_covid_ind_info
+ sqoop job --exec job_covid_ind_info
+
+3) checking the job_state_wide_Test_Detl infomation and executing it 
+ sqoop job --show state_wide_Test_Detl
+ sqoop job --exec state_wide_Test_Detl
+
+hive login :
+
+beeline -u jdbc:hive2://
+
+
+creating schema covid to keep all the relavent tables:->
+=====================================================
+create schema covid;
+
+
+use covid;
+
+hive table creation :-->
+====================
+
+create external table covid_india_information(seqno int,date_of_info
+string,state string,cured int,deaths int,confirmed int) clustered
+by(date_of_info) into 4 buckets row format delimited
+fields terminated by ',' stored as textfile location
+'/user/cloudera/data/covid_ind_info/';
+
+create external table state_wide_Test_Detl(seqno int,test_date
+string,state string,Tot_samples int,positive int,nagitive int) 
+clustered by(test_date) into 4 buckets row format delimited fields
+terminated by ',' stored as textfile location
+'/user/cloudera/data/state_wide_Test_Detl/';
+
+
+create external table covid_india_information(seqno int,date_of_info
+string,cured int,deaths int,confirmed int)  PARTITIONED BY (state string) clustered
+by(date_of_info) into 4 buckets row format delimited
+fields terminated by ',' stored as textfile location
+'/user/cloudera/data/covid_ind_info_main/';
+
+create external table state_wide_Test_Detl(seqno int,test_date
+string,Tot_samples int,positive int,nagitive int)  PARTITIONED BY (state string)
+clustered by(test_date) into 4 buckets row format delimited fields
+terminated by ',' stored as textfile location
+'/user/cloudera/data/state_wide_Test_Detl_main/';
+
+select state,sum(cured) as cured,state,sum(deaths) as deaths,state,sum(confirmed) as confirmed_cases  from covid_india_infomation group by state;
+
+select state,substring(date_of_info,instr(date_of_info,'/')+1) month_state_wise,sum(cured) as cured,state,sum(deaths) as deaths,state,sum(confirmed) as confirmed_cases  from covid_india_infomation group by state,substring(date_of_info,instr(date_of_info,'/')+1);
+
+
+select state,sum(tot_samples) as tot_samples,sum(positive) as positive_cases,state,sum(nagitive) as nagitive_cases  from state_wide_Test_Detl group by state;
+
+
+select state,substring(test_date,instr(test_date,'/')+1) month_state_wise,sum(tot_samples) as tot_samples,sum(positive) as positive_cases,state,sum(nagitive) as nagitive_cases  from state_wide_Test_Detl group by state,substring(test_date,instr(test_date,'/')+1);
+
